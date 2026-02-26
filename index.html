@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Analizador de Lexemas</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=Fira+Code&display=swap" rel="stylesheet">
+
+  <style>
+    body { font-family: 'Inter', sans-serif; background:#0f172a; color:#f8fafc; }
+    .code-font { font-family: 'Fira Code', monospace; }
+    .glass { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+    select option { background: #1e293b; color: white; }
+  </style>
+</head>
+
+<body class="min-h-screen p-4 md:p-12">
+  <div class="max-w-5xl mx-auto">
+    <header class="mb-8 border-b border-slate-700 pb-4 flex justify-between items-end">
+      <div>
+        <h1 class="text-3xl font-bold text-indigo-400">
+          Analizador de Lexemas
+          <span class="text-sm font-normal text-slate-500 ml-2"> </span>
+        </h1>
+        <p class="text-slate-400 mt-1"> </p>
+      </div>
+
+      <div class="text-right">
+        <label class="block text-[10px] uppercase text-slate-500 font-bold mb-1">Lenguaje</label>
+        <select id="langSelector"
+          class="bg-slate-800 border border-slate-600 text-indigo-300 text-sm rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-48 p-2 outline-none">
+          <option value="cstyle">Java / C++ / C# / JS</option>
+          <option value="python">Python</option>
+          <option value="sql">SQL</option>
+          <option value="html">HTML</option>
+          <option value="css">CSS</option>
+        </select>
+      </div>
+    </header>
+
+    <main class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <section class="glass rounded-2xl p-6 flex flex-col">
+        <label class="block text-indigo-300 text-sm font-semibold mb-3 uppercase tracking-wider">
+          Código fuente
+        </label>
+
+        <textarea id="inputCode"
+          class="flex-grow w-full h-96 bg-slate-900/50 border border-slate-700 rounded-xl p-4 code-font text-indigo-100 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none resize-none"
+          placeholder="Pega tu código aquí..."></textarea>
+
+        <div class="flex flex-wrap gap-3 mt-4">
+          <button id="btnAnalizar"
+            class="bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 px-8 rounded-full transition-all shadow-lg shadow-indigo-500/20">
+            Analizar ahora
+          </button>
+
+          <button id="btnLimpiar"
+            class="bg-slate-700 hover:bg-slate-600 text-slate-200 py-2.5 px-6 rounded-full transition-all">
+            Limpiar
+          </button>
+        </div>
+      </section>
+
+      <section class="glass rounded-2xl flex flex-col overflow-hidden">
+        <div class="bg-slate-800/50 px-6 py-3 border-b border-slate-700 flex justify-between items-center">
+          <h2 class="text-sm font-semibold text-slate-300 uppercase tracking-widest">Tabla de Tokens</h2>
+          <span id="tokenCount" class="text-[10px] bg-slate-700 px-2 py-0.5 rounded text-slate-400">0 tokens</span>
+        </div>
+
+        <div class="overflow-y-auto h-[480px]">
+          <table class="w-full text-left border-collapse">
+            <thead class="sticky top-0 bg-slate-800 z-10 shadow-md">
+              <tr class="text-slate-500 text-xs">
+                <th class="px-6 py-3 font-bold">LEXEMA</th>
+                <th class="px-6 py-3 font-bold">TOKEN / CATEGORÍA</th>
+              </tr>
+            </thead>
+
+            <tbody id="tokenTable" class="text-sm divide-y divide-slate-800/50">
+              <tr>
+                <td colspan="2" class="px-6 py-10 text-center text-slate-500 italic">
+                  Esperando entrada de código...
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const $ = (sel) => document.querySelector(sel);
+
+    const UI = {
+      lang: $('#langSelector'),
+      input: $('#inputCode'),
+      tbody: $('#tokenTable'),
+      count: $('#tokenCount'),
+      btnAnalizar: $('#btnAnalizar'),
+      btnLimpiar: $('#btnLimpiar')
+    };
+
+    const LENGUAJES = {
+      cstyle: {
+        patrones: [
+          { tipo: 'COMENTARIO',  rx: /^(\/\/.*|\/\*[\s\S]*?\*\/)/ },
+          { tipo: 'ESPACIO',     rx: /^\s+/ },
+          { tipo: 'KEYWORD',     rx: /^(while|if|else|return|int|float|double|for|void|class|public|static|const|let|var|function|new)\b/ },
+          { tipo: 'STRING',      rx: /^(".*?"|'.*?')/ },
+          { tipo: 'NUM_REAL',    rx: /^\d+\.\d+/ },
+          { tipo: 'NUM_ENTERO',  rx: /^\d+/ },
+          { tipo: 'ID',          rx: /^[a-zA-Z_][a-zA-Z0-9_]*/ },
+          { tipo: 'OP_COMP',     rx: /^(<=|>=|==|!=|<|>)/ },
+          { tipo: 'OP_LOGICO',   rx: /^(&&|\|\||!)/ },
+          { tipo: 'OP_ASIGN',    rx: /^(=|\+=|-=|\*=|\/=)/ },
+          { tipo: 'OP_ARIT',     rx: /^(\+|\-|\*|\/|\^|%)/ },
+          { tipo: 'DELIMITADOR', rx: /^[;,\(\)\{\}\[\]\.]/ },
+          { tipo: 'ERROR',       rx: /^./ }
+        ]
+      },
+
+      python: {
+        patrones: [
+          { tipo: 'COMENTARIO',  rx: /^#.*/ },
+          { tipo: 'ESPACIO',     rx: /^\s+/ },
+          { tipo: 'KEYWORD',     rx: /^(def|if|elif|else|while|for|in|return|import|from|as|class|try|except|with|None|True|False|and|or|not)\b/ },
+          { tipo: 'STRING',      rx: /^(".*?"|'.*?'|"{3}[\s\S]*?"{3}|'{3}[\s\S]*?'{3})/ },
+          { tipo: 'NUM_REAL',    rx: /^\d+\.\d+/ },
+          { tipo: 'NUM_ENTERO',  rx: /^\d+/ },
+          { tipo: 'ID',          rx: /^[a-zA-Z_][a-zA-Z0-9_]*/ },
+          { tipo: 'OP_COMP',     rx: /^(<=|>=|==|!=|<|>)/ },
+          { tipo: 'OP_ASIGN',    rx: /^(=|\+=|-=)/ },
+          { tipo: 'OP_ARIT',     rx: /^(\+|\-|\*|\/|\/\/|\*\*|%)/ },
+          { tipo: 'DELIMITADOR', rx: /^[;,\(\)\{\}\[\]\:\.]/ },
+          { tipo: 'ERROR',       rx: /^./ }
+        ]
+      },
+
+      sql: {
+        patrones: [
+          { tipo: 'COMENTARIO',  rx: /^(--.*|\/\*[\s\S]*?\*\/)/ },
+          { tipo: 'ESPACIO',     rx: /^\s+/ },
+          { tipo: 'KEYWORD',     rx: /^(SELECT|FROM|WHERE|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|INT|VARCHAR|PRIMARY|KEY|FOREIGN|JOIN|ON|GROUP|BY|ORDER|DESC|ASC|AND|OR|NOT|NULL)\b/i },
+          { tipo: 'STRING',      rx: /^('.*?')/ },
+          { tipo: 'NUMERO',      rx: /^\d+/ },
+          { tipo: 'ID',          rx: /^[a-zA-Z_][a-zA-Z0-9_]*/ },
+          { tipo: 'OP_COMP',     rx: /^(<=|>=|==|!=|<>|<|>)/ },
+          { tipo: 'OP_ASIGN',    rx: /^=/ },
+          { tipo: 'OP_ARIT',     rx: /^(\+|\-|\*|\/)/ },
+          { tipo: 'DELIMITADOR', rx: /^[;,\(\)\.]/ },
+          { tipo: 'ERROR',       rx: /^./ }
+        ]
+      },
+
+      html: {
+        patrones: [
+          { tipo: 'COMENTARIO',  rx: /^<!--[\s\S]*?-->/ },
+          { tipo: 'ESPACIO',     rx: /^\s+/ },
+          { tipo: 'TAG_OPEN',    rx: /^<[a-zA-Z0-9]+/ },
+          { tipo: 'TAG_CLOSE',   rx: /^<\/[a-zA-Z0-9]+>/ },
+          { tipo: 'TAG_END',     rx: /^>/ },
+          { tipo: 'ATTR_NAME',   rx: /^[a-zA-Z\-]+/ },
+          { tipo: 'OP_ASIGN',    rx: /^=/ },
+          { tipo: 'STRING',      rx: /^(".*?"|'.*?')/ },
+          { tipo: 'DELIMITADOR', rx: /^[;,\(\)\{\}\[\]]/ },
+          { tipo: 'TEXTO',       rx: /^[^<>\s]+/ },
+          { tipo: 'ERROR',       rx: /^./ }
+        ]
+      },
+
+      css: {
+        patrones: [
+          { tipo: 'COMENTARIO',  rx: /^\/\*[\s\S]*?\*\// },
+          { tipo: 'ESPACIO',     rx: /^\s+/ },
+          { tipo: 'SELECTOR',    rx: /^(\.[a-zA-Z0-9_\-]+|#[a-zA-Z0-9_\-]+|[a-zA-Z0-9_\-]+)/ },
+          { tipo: 'PROPERTY',    rx: /^[a-zA-Z\-]+(?=\s*:)/ },
+          { tipo: 'VALUE',       rx: /^(:[^;\}]+)/ },
+          { tipo: 'DELIMITADOR', rx: /^[\{\};:,]/ },
+          { tipo: 'ERROR',       rx: /^./ }
+        ]
+      }
+    };
+
+    function limpiarTabla() {
+      UI.tbody.innerHTML = `
+        <tr>
+          <td colspan="2" class="px-6 py-10 text-center text-slate-500 italic">
+            Esperando entrada de código...
+          </td>
+        </tr>
+      `;
+      UI.count.textContent = '0 tokens';
+    }
+
+    function escaparHtml(texto) {
+      return texto.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    function claseBadge(tipo) {
+      let c = "bg-slate-700 text-slate-300";
+      if (tipo === 'KEYWORD') c = "bg-indigo-900/60 text-indigo-300 border-indigo-500/30";
+      if (tipo === 'ERROR') c = "bg-rose-900/60 text-rose-300 border-rose-500/30";
+      if (tipo.includes('OP')) c = "bg-emerald-900/40 text-emerald-300 border-emerald-500/30";
+      return c;
+    }
+
+    function renderFila({ lexema, tipo }) {
+      const tr = document.createElement('tr');
+      tr.className = "hover:bg-indigo-500/5 transition-colors";
+      tr.innerHTML = `
+        <td class="px-6 py-3 code-font text-indigo-200 font-medium whitespace-pre-wrap">${escaparHtml(lexema)}</td>
+        <td class="px-6 py-3">
+          <span class="px-2 py-0.5 rounded text-[10px] border uppercase font-mono ${claseBadge(tipo)}">
+            ${tipo}
+          </span>
+        </td>
+      `;
+      UI.tbody.appendChild(tr);
+    }
+
+    function tokenizar(texto, patrones) {
+      const tokens = [];
+      let pos = 0;
+
+      while (pos < texto.length) {
+        const fragmento = texto.slice(pos);
+        let encontrado = null;
+
+        for (const p of patrones) {
+          const m = fragmento.match(p.rx);
+          if (m) {
+            encontrado = { tipo: p.tipo, lexema: m[0] };
+            break;
+          }
+        }
+
+        if (!encontrado) {
+          pos += 1;
+          continue;
+        }
+
+        pos += encontrado.lexema.length;
+
+        if (encontrado.tipo === 'ESPACIO' || encontrado.tipo === 'COMENTARIO') continue;
+        tokens.push(encontrado);
+      }
+
+      return tokens;
+    }
+
+    function analizarAhora() {
+      const lang = UI.lang.value;
+      const config = LENGUAJES[lang];
+      const entrada = UI.input.value || "";
+
+      UI.tbody.innerHTML = "";
+
+      const tokens = tokenizar(entrada, config.patrones);
+
+      UI.count.textContent = `${tokens.length} tokens`;
+
+      if (tokens.length === 0) {
+        UI.tbody.innerHTML = `
+          <tr>
+            <td colspan="2" class="px-6 py-10 text-center ${entrada.trim() ? 'text-rose-400' : 'text-slate-500 italic'}">
+              ${entrada.trim() ? 'No se detectaron lexemas.' : 'Esperando entrada de código...'}
+            </td>
+          </tr>
+        `;
+        return;
+      }
+
+      for (const t of tokens) renderFila(t);
+    }
+
+    UI.btnAnalizar.addEventListener('click', analizarAhora);
+    UI.btnLimpiar.addEventListener('click', () => {
+      UI.input.value = "";
+      limpiarTabla();
+    });
+
+    UI.lang.addEventListener('change', () => {
+      limpiarTabla();
+    });
+
+    window.addEventListener('load', () => {
+      limpiarTabla();
+    });
+  </script>
+</body>
+</html>
